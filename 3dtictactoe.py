@@ -13,10 +13,10 @@ class Board:
     def __str__(self):  
         output = '=' * 10 + '\n' * 2
         layer_names = ["Bottom Layer", "Middle Layer", 'Top Layer']
-        for i, layer in list(enumerate(self.board))[::-1]:
+        for i in range(len(self.board)-1,-1,-1):
             output += layer_names[i] + "\n"
-            for slice in layer[::-1]:
-                output += " ".join(slice) + '\n'
+            for j in range(len(self.board)-1,-1,-1):
+                output += " ".join(self.board[i][j]) + '\n'
             output += (('-') * 10) + ('\n' * 2)
     
         return output
@@ -42,6 +42,21 @@ class Board:
                 else:
                     self.next_player_c = 'X'
                 return
+            
+    def undo_move(self, move):
+        j, k = move
+        
+        for i in range(len(self.board)-1, -1, -1):
+            if self.board[i][j][k] in ('X', 'O'):
+                self.board[i][j][k] = '.'
+                if self.next_player_c == 'X':
+                    self.next_player_c = 'O'
+                else:
+                    self.next_player_c = 'X'
+                return
+
+        raise Exception(f"Tried to undo move {move} that had no letters placed")
+            
         
     def get_legal_moves(self):
         if self.winner() is not None:
@@ -126,7 +141,7 @@ class Board:
         return
     
 
-def minimax(board, lookup = {}):
+def minimax(board, lookup = {}, depth = 5):
     #print(f'Minimax Debug: getting board state as input at depth {depth}:')
     #print(board)
     precomputed = lookup.get(board.get_minimal_board_position())
@@ -135,7 +150,7 @@ def minimax(board, lookup = {}):
     
     legal_moves = board.get_legal_moves()
     #print(f'Minimax Debug: Found {legal_moves} legal moves for board state')
-    if len(legal_moves) == 0:
+    if depth == 0 or len(legal_moves) == 0:
         ##print(f'Minimax Debug: Found 0 legal moves for board state: returning evaluation {board.eval()}')
         return board.eval(), None
     
@@ -144,63 +159,64 @@ def minimax(board, lookup = {}):
         best_score = -math.inf
         best_move = None
         for move in legal_moves:
-            board_copy = copy.deepcopy(board)
             #print(f'Minimax Debug: exploring move {move} at depth {depth}, maximizing from board state {board_copy}')
-            board_copy.move(move)
-            score, _ = minimax(board_copy, lookup)
-            if score > best_score:
-                best_score = score
-                best_move = move
-                lookup[board_copy.get_minimal_board_position()] = (best_score, best_move)
-                print_progress(lookup)
-                if best_score == 1: # This indicates that we have found a move that is winning by force, we don't need to look further
-                    break 
+            try:
+                board.move(move)
+                score, _ = minimax(board, lookup, depth-1)
+                if score > best_score:
+                    best_score = score
+                    best_move = move
+                    if best_score == 1: # This indicates that we have found a move that is winning by force, we don't need to look further
+                        break
+            finally:
+                board.undo_move(move)
         return best_score, best_move
     else:
         best_score = math.inf
         best_move = None
         for move in legal_moves:
-            board_copy = copy.deepcopy(board)
-            #print(f'Minimax Debug: exploring move {move} at depth {depth} minimizing from board state {board_copy}')
-            board_copy.move(move)
-            score, _ = minimax(board_copy, lookup)
-            if score < best_score:
-                best_score = score
-                best_move = move
-                lookup[board_copy.get_minimal_board_position()] = (best_score, best_move)
-                print_progress(lookup)
-                if best_score == -1:  # This indicates that we have found a move that is winning by force, we don't need to look further
-                    break
+            try:
+                #print(f'Minimax Debug: exploring move {move} at depth {depth} minimizing from board state {board_copy}')
+                board.move(move)
+                score, _ = minimax(board, lookup, depth-1)
+                if score < best_score:
+                    best_score = score
+                    best_move = move
+                    if best_score == -1:  # This indicates that we have found a move that is winning by force, we don't need to look further
+                        break
+            finally:
+                board.undo_move(move)
         return best_score, best_move
 
-def print_progress(lookup):
-    num_positions = len(lookup)
-    if num_positions % 10000 == 0:
-        print("Number of positions explored:", num_positions)
-
 def main():
-    board = Board()
-    eval, engine_move = minimax(board)
-    print(eval, engine_move)
+    board = Board()    
+    
+    # eval, engine_move = minimax(board)
+    # print(eval, engine_move)
 
-    # print(f"Welcome to 3D Tic Tac Toe. You are {board.next_player_c} and are going first.")
-    # while board.winner() is None and len(board.get_legal_moves()) > 0:
-    #     legal_move = False
-    #     while not legal_move:
-    #         print("Current Board State:\n\n")
-    #         print(board)
-    #         print("\n\n")
-    #         print(board.get_legal_moves())
-    #         j = int(input("X coordinate: "))
-    #         k = int(input("Y coordinate: "))
-    #         try:
-    #             board.move((j,k))
-    #             legal_move = True
-    #         except:
-    #             print("You must make a legal move")
+    print(f"Welcome to 3D Tic Tac Toe. You are {board.next_player_c} and are going first.")
+    while board.winner() is None and len(board.get_legal_moves()) > 0:
+        lookup = {}
+        legal_move = False
+        while not legal_move:
+            print("Current Board State:\n\n")
+            print(board)
+            print("\n\n")
+            print(board.get_legal_moves())
+            k = int(input("X coordinate: "))
+            j = int(input("Y coordinate: "))
+            try:
+                board.move((j,k))
+                legal_move = True
+            except:
+                print("You must make a legal move")
 
-    #     eval, engine_move = minimax(board)
-    #     board.move(engine_move)
+        eval, engine_move = minimax(board, lookup)
+        if engine_move is not None:
+            board.move(engine_move)
+
+    print(f"The winner is {board.winner()}! Final position: \n {board}")
  
 if __name__ == "__main__":
     main()
+
