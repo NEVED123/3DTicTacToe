@@ -3,8 +3,17 @@
 #include <limits.h>
 #include <time.h>
 
-
 uint32_t WIN_MASKS[48];
+
+typedef enum {
+    ERR_OK = 0,
+    ERR_ILLEGAL_MOVE
+} ErrorCode;
+
+typedef struct {
+    int value;
+    ErrorCode error;
+} Result;
 
 struct BoardState {
     unsigned int isXturn : 1; // Boolean, one bit
@@ -12,13 +21,19 @@ struct BoardState {
     uint32_t O;
 };
 
-int winner(struct BoardState *s) {
+struct MinimaxResult {
+    int eval;
+    int j;
+    int k;
+};
+
+int winner(struct BoardState *b) {
     for (int i = 0; i < 48; i++) {
-        if ((s->X & WIN_MASKS[i]) == WIN_MASKS[i]){
-            return 1;
+        if ((b->X & WIN_MASKS[i]) == WIN_MASKS[i]){
+            return INT_MAX;
         }
-        if ((s->O & WIN_MASKS[i]) == WIN_MASKS[i]) {
-            return -1;
+        if ((b->O & WIN_MASKS[i]) == WIN_MASKS[i]) {
+            return INT_MIN;
         }
     }
 
@@ -118,16 +133,16 @@ void printWinMask(u_int32_t m) {
     printf("\n");
 }
 
-void printBoardState(struct BoardState *s) { 
+void printBoardState(struct BoardState *b) { 
 
-    int winning_player = winner(s);
-    if (winning_player == 1) {
-        printf("X has won the game!");
+    int winning_player = winner(b);
+    if (winning_player == INT_MAX) {
+        printf("X has won the game!\n\n");
     }
-    else if (winning_player == -1) {
-        printf("O has won the game!");
+    else if (winning_player == INT_MIN) {
+        printf("O has won the game!\n\n");
     } else {
-        if (s->isXturn) 
+        if (b->isXturn) 
             printf("X");
         else
             printf("O");
@@ -137,9 +152,9 @@ void printBoardState(struct BoardState *s) {
     for (int l = 0; l < 9; l++) {
         int bit_mask = 1 << ((3 * (l + 1)) - 1);
         for (int k = 0; k < 3; k++){
-            if (s->X & bit_mask)
+            if (b->X & bit_mask)
                 printf("X ");
-            else if (s->O & bit_mask)
+            else if (b->O & bit_mask)
                 printf("O ");
             else
                 printf(". ");
@@ -155,85 +170,90 @@ void printBoardState(struct BoardState *s) {
     }
 }
 
-int move(char j, char k, struct BoardState *s) {
+Result move(char j, char k, struct BoardState *b) {
 
-    if (winner(s) != 0) {
-        return -1;
+    Result r;
+
+    int winning_player = winner(b);
+    if (winning_player != 0) {
+        r.error = ERR_ILLEGAL_MOVE;
+        return r;
     }
 
     int move_mask = 1 << ((2-k) * 3 + (2-j) + 18);
-    u_int32_t all_occupied_mask = s->X | s->O;
+    u_int32_t all_occupied_mask = b->X | b->O;
     for (int i = 0; i < 3; i++) {
         if (!(move_mask & all_occupied_mask)) {
-            if (s->isXturn) {
-                s->X |= move_mask;
+            if (b->isXturn) {
+                b->X |= move_mask;
             } else {
-                s->O |= move_mask;
+                b->O |= move_mask;
             }
 
-            s->isXturn ^= 1;
-            return 0;
+            b->isXturn ^= 1;
+            r.error = ERR_OK;
+            return r;
         }
         move_mask >>= 9;
     }
-
-    return -1; // Not a legal move
+    r.error = ERR_ILLEGAL_MOVE;
+    return r;
 }
 
 // This method makes you pinky promise that you are respecting game move stack
-int undo_move(char j, char k, struct BoardState *s) {
+Result undo_move(char j, char k, struct BoardState *b) {
 
+    Result r;
     int move_mask = 1 << ((2-k) * 3 + (2-j));
     for (int i = 0; i < 3; i++) {
-        if (s->X & move_mask) {
-            s->X ^= move_mask;
-            s->isXturn ^= 1;
-            return 0;
+        if (b->X & move_mask) {
+            b->X ^= move_mask;
+            b->isXturn ^= 1;
+            r.error = ERR_OK;
+            return r;
         }
-        if (s->O & move_mask) {
-            s->O ^= move_mask;
-            s->isXturn ^= 1;
-            return 0;
+        if (b->O & move_mask) {
+            b->O ^= move_mask;
+            b->isXturn ^= 1;
+            r.error = ERR_OK;
+            return r;
         }
         move_mask <<= 9; 
     }
 
-    return -1; // No move to undo
+    r.error = ERR_ILLEGAL_MOVE;
+    return r;
 }
 
-char has_legal_moves(struct BoardState *s) {
+int has_legal_moves(struct BoardState *b) {
 
-    if (winner(s) != 0) {
+    if (winner(b) != 0) {
         return 0;
     }
 
-    u_int32_t all_occupied_mask = s->X | s->O;
+    u_int32_t all_occupied_mask = b->X | b->O;
     int layer_full_mask = 0b111111111;
 
     return (all_occupied_mask & layer_full_mask) != layer_full_mask;
 }
 
-struct MinimaxResult {
-    int eval;
-    int j;
-    int k;
-};
 
-int minimax(struct BoardState *s, int depth, struct MinimaxResult *r) {
-    if (depth == 0 || !has_legal_moves(s)) {
-        return winner(s);
+
+int minimax(struct BoardState *b, int depth, struct MinimaxResult *r) {
+    if (depth == 0 || !has_legal_moves(b)) {
+        return winner(b);
     }
 
-    char is_maximizing = s->isXturn; // praying this implicitly casts bit to char
+    char is_maximizing = b->isXturn;
     if (is_maximizing) {
         int best_score = INT_MIN;
         for (int j = 0; j < 3; j++) {
             for (int k = 0; k < 3; k++) {
-                int move_result = move(j,k,s);
-                if (move_result == -1) {
+                Result move_result = move(j,k,b);
+                if (move_result.error == ERR_ILLEGAL_MOVE) {
                     continue;
                 }
-                int score = minimax(s, depth-1, NULL);
+                int score = minimax(b, depth-1, NULL);
                 if (score > best_score) {
                     best_score = score;    
                     if (r != NULL) {
@@ -242,7 +262,14 @@ int minimax(struct BoardState *s, int depth, struct MinimaxResult *r) {
                         r->k = k;
                     }
                 }
-                undo_move(j,k,s);
+
+                Result undo_move_result = undo_move(j,k,b);
+                if (undo_move_result.error != ERR_OK) {
+                    printf("Error: Attempted to undo move j = %d, k = %d with nothing to undo\n on this board state:\n", j, k);
+                    printBoardState(b);
+                    printf("Debug info: depth = %d, undo_move_result = %d, isMaximizing = %d", depth, undo_move_result.error, is_maximizing);
+                    exit(EXIT_FAILURE);
+                }
             }
         }
         return best_score;
@@ -250,11 +277,11 @@ int minimax(struct BoardState *s, int depth, struct MinimaxResult *r) {
         int best_score = INT_MAX;
         for (int j = 0; j < 3; j++) {
             for (int k = 0; k < 3; k++) {
-                int move_result = move(j,k,s);
-                if (move_result == -1) {
+                Result move_result = move(j,k,b);
+                if (move_result.error == ERR_ILLEGAL_MOVE) {
                     continue;
                 }
-                int score = minimax(s, depth-1, NULL);
+                int score = minimax(b, depth-1, NULL);
                 if (score < best_score) {
                     best_score = score;  
                     if (r != NULL) {
@@ -263,8 +290,13 @@ int minimax(struct BoardState *s, int depth, struct MinimaxResult *r) {
                         r->k = k;
                     }
                 }
-
-                undo_move(j,k,s);
+                Result undo_move_result = undo_move(j,k,b);
+                if (undo_move_result.error != ERR_OK) {
+                    printf("Error: Attempted to undo move j = %d, k = %d with nothing to undo\n on this board state:\n", j, k);
+                    printBoardState(b);
+                    printf("Debug info: depth = %d, undo_move_result = %d, isMaximizing = %d", depth, undo_move_result.error, is_maximizing);
+                    exit(EXIT_FAILURE);
+                }
             }
         }
         return best_score;
@@ -299,8 +331,8 @@ int main() {
             printf("Y coordinate: ");
             scanf("%d", &k);
 
-            int move_result = move(j, k, &b);
-            if (move_result == 0) {
+            Result move_result = move(j, k, &b);
+            if (move_result.error == ERR_OK) {
                 user_made_legal_move = 1;
             }  else {
                 printf("You must made a legal move \n\n");
