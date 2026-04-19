@@ -1,5 +1,5 @@
 import math
-import copy
+import time
 
 class Board:
 
@@ -211,7 +211,10 @@ def main():
             except:
                 print("You must make a legal move")
 
+        start_time = time.perf_counter()
         eval, engine_move = minimax(board, lookup)
+        end_time = time.perf_counter()
+        print(f"Time to find move on depth 5: {end_time-start_time:.6f}")
         if engine_move is not None:
             board.move(engine_move)
 
