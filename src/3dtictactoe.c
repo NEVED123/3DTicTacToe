@@ -314,9 +314,11 @@ int main() {
 
     struct MinimaxResult r = {0,0,0};
 
-    int depth = 9;
+    int depth = 8;
+    printf("\n\nWhat depth would you like the engine to search to? Note that anything beyond depth 8 will take at least 30 seconds per move: \n\n");
+    scanf("%d", &depth);
 
-    printf("Welcome to 3D Tic Tac Toe. You are X and going first");
+    printf("Welcome to 3D Tic Tac Toe. You are X and going first. X coordinate is 0 to 2 from left to right, and Y coordinate is 0 to 2 from bottom to top\n\n");
 
     while (has_legal_moves(&b)) {
         char user_made_legal_move = 0;
