@@ -3,6 +3,23 @@
 #include <limits.h>
 #include <time.h>
 
+void printBoardMask(u_int32_t m) {
+    for (int i = 31; i > -1; i--) {
+        int k = m >> i; // Shift right by i positions
+        if (i == 26)
+            printf("| ");
+        if (i < 26 && (i+1) % 9 == 0)
+            printf("  ");
+        else if (i < 26 && (i+1) % 3 == 0)
+            printf(" ");
+        if (k & 1)      // Check if the last bit is 1
+            printf("1");
+        else
+            printf("0");
+    }
+    printf("\n");
+}
+
 uint32_t WIN_MASKS[48];
 
 typedef enum {
@@ -15,19 +32,19 @@ typedef struct {
     ErrorCode error;
 } Result;
 
-struct BoardState {
+typedef struct {
     unsigned int isXturn : 1; // Boolean, one bit
     uint32_t X;
     uint32_t O;
-};
+} BoardState;
 
-struct MinimaxResult {
+typedef struct {
     int eval;
     int j;
     int k;
-};
+} MinimaxResult;
 
-int winner(struct BoardState *b) {
+int winner(BoardState *b) {
     for (int i = 0; i < 48; i++) {
         if ((b->X & WIN_MASKS[i]) == WIN_MASKS[i]){
             return INT_MAX;
@@ -38,6 +55,149 @@ int winner(struct BoardState *b) {
     }
 
     return 0;
+}
+
+int eval(BoardState *b) {
+    for (int i = 0; i < 48; i++) {
+        if ((b->X & WIN_MASKS[i]) == WIN_MASKS[i]){
+            return INT_MAX;
+        }
+        if ((b->O & WIN_MASKS[i]) == WIN_MASKS[i]) {
+            return INT_MIN;
+        }
+    }
+
+    // Look for 2 in a rows (I will refer to these as C2 for "connect 2") - for each 2 in a row each player has on the board, this will earn one point.
+    // From this mask, since every "node" is connected to one another, we can use n(n-1)/2 to find total number of 2 in a rows.
+    // The eval will be then difference between these two. In the future, we could prioritize the ones that actually
+    // open up a new immediate threat rather than those that are buried and can't pose any problems.
+    // Note that this currently doesn't take into account whose turn it is - i.e, X could be one turn away from winning, but if O has more c2's, then this algorithm
+    int total_x_c2 = 0;
+    int total_o_c2 = 0;
+    uint32_t c2_mask = 0b0110110000110110000000000000; //This is a 2x2x2 cube within the 3x3x3 grid. There are only 8 places for this to fit, hence l = 2, m = 4
+    for (int i = 0; i < 2; i += 1) {
+        for (int j = 0; j < 2; j += 1) {
+            for (int k = 0; k < 2; k += 1) {
+                uint32_t x_c2_mask = b->X & c2_mask;
+                int num_x_c2_nodes = __builtin_popcount(x_c2_mask); //Super overoptimization, __builtin_popcount directly calls the ASM instruction for counting number of bits set to 1
+                total_x_c2 += (num_x_c2_nodes * (num_x_c2_nodes-1)) / 2; 
+
+                uint32_t o_c2_mask = b->O & c2_mask;
+                int num_o_c2_nodes = __builtin_popcount(o_c2_mask); 
+                total_o_c2 +=  (num_o_c2_nodes * (num_o_c2_nodes-1)) / 2;
+
+                c2_mask >>= 1;
+            }
+            c2_mask >>= 1;
+        }
+        c2_mask >>= 3; // This brings us up to the next layer
+    }
+
+    return total_x_c2 - total_o_c2;
+}
+
+Result move(char j, char k, BoardState *b) {
+
+    Result r;
+
+    int winning_player = winner(b);
+    if (winning_player != 0) {
+        r.error = ERR_ILLEGAL_MOVE;
+        return r;
+    }
+
+    int move_mask = 1 << ((2-k) * 3 + (2-j) + 18);
+    u_int32_t all_occupied_mask = b->X | b->O;
+    for (int i = 0; i < 3; i++) {
+        if (!(move_mask & all_occupied_mask)) {
+            if (b->isXturn) {
+                b->X |= move_mask;
+            } else {
+                b->O |= move_mask;
+            }
+
+            b->isXturn ^= 1;
+            r.error = ERR_OK;
+            return r;
+        }
+        move_mask >>= 9;
+    }
+    r.error = ERR_ILLEGAL_MOVE;
+    return r;
+}
+
+// This method makes you pinky promise that you are respecting game move stack
+Result undo_move(char j, char k, BoardState *b) {
+
+    Result r;
+    int move_mask = 1 << ((2-k) * 3 + (2-j));
+    for (int i = 0; i < 3; i++) {
+        if (b->X & move_mask) {
+            b->X ^= move_mask;
+            b->isXturn ^= 1;
+            r.error = ERR_OK;
+            return r;
+        }
+        if (b->O & move_mask) {
+            b->O ^= move_mask;
+            b->isXturn ^= 1;
+            r.error = ERR_OK;
+            return r;
+        }
+        move_mask <<= 9; 
+    }
+
+    r.error = ERR_ILLEGAL_MOVE;
+    return r;
+}
+
+void get_move_order(BoardState *b, MinimaxResult *moves_buffer) {
+    // At most, we need to sort 9 moves
+    int isXturn = b->isXturn;
+
+    // We must initialize the buffer before attempting to sort again
+    for (int i = 0; i < 9; i++) {
+        if (isXturn)
+            moves_buffer[i].eval = INT_MIN;
+        else {
+            moves_buffer[i].eval = INT_MAX;
+        }
+        moves_buffer[i].j = 0;
+        moves_buffer[i].k = 0;
+    }
+
+    for (int j = 0; j < 3; j += 1) {
+        for (int k = 0; k < 3; k += 1) {
+            
+            Result move_result = move(j,k,b);
+            if (move_result.error == ERR_ILLEGAL_MOVE) {
+                continue;
+            }
+
+            int move_evaluation = eval(b);
+
+            // Use insertion sort to put the move in its correct spot
+            // heap sort may be slightly faster here but the difference would be negligable since n is at most 9 and not worth the additional complexity for now.
+            MinimaxResult curr_eval = { .eval = move_evaluation, .j = j, .k = k };
+            for (int l = 0; l < 9; l += 1) {
+                // Sort descending order if it is X move (maximizing)
+                // Sort ascending order if it is O move (minimizing)
+                if ((isXturn && curr_eval.eval > moves_buffer[l].eval) || (!isXturn && curr_eval.eval < moves_buffer[l].eval)) {
+                    MinimaxResult temp_eval = moves_buffer[l];
+                    moves_buffer[l] = curr_eval;
+                    curr_eval = temp_eval;
+                }
+
+                // If we have just replaced an INT_MIN or INT_MAX, it means we are at the end of the list, no need to continue
+                // replacing
+                if (isXturn && curr_eval.eval == INT_MIN || !isXturn && curr_eval.eval == INT_MAX) {
+                    break;
+                }
+            }
+
+            undo_move(j,k,b);
+        }
+    }
 }
 
 // Indexing is treating the mask as though it were a i*j*k array.
@@ -116,24 +276,8 @@ void generate_win_masks() {
     WIN_MASKS[w] = 0b000000100000010000001000000;
 }
 
-void printWinMask(u_int32_t m) {
-    for (int i = 31; i > -1; i--) {
-        int k = m >> i; // Shift right by i positions
-        if (i == 26)
-            printf("| ");
-        if (i < 26 && (i+1) % 9 == 0)
-            printf("  ");
-        else if (i < 26 && (i+1) % 3 == 0)
-            printf(" ");
-        if (k & 1)      // Check if the last bit is 1
-            printf("1");
-        else
-            printf("0");
-    }
-    printf("\n");
-}
 
-void printBoardState(struct BoardState *b) { 
+void printBoardState(BoardState *b) { 
 
     int winning_player = winner(b);
     if (winning_player == INT_MAX) {
@@ -170,62 +314,9 @@ void printBoardState(struct BoardState *b) {
     }
 }
 
-Result move(char j, char k, struct BoardState *b) {
 
-    Result r;
 
-    int winning_player = winner(b);
-    if (winning_player != 0) {
-        r.error = ERR_ILLEGAL_MOVE;
-        return r;
-    }
-
-    int move_mask = 1 << ((2-k) * 3 + (2-j) + 18);
-    u_int32_t all_occupied_mask = b->X | b->O;
-    for (int i = 0; i < 3; i++) {
-        if (!(move_mask & all_occupied_mask)) {
-            if (b->isXturn) {
-                b->X |= move_mask;
-            } else {
-                b->O |= move_mask;
-            }
-
-            b->isXturn ^= 1;
-            r.error = ERR_OK;
-            return r;
-        }
-        move_mask >>= 9;
-    }
-    r.error = ERR_ILLEGAL_MOVE;
-    return r;
-}
-
-// This method makes you pinky promise that you are respecting game move stack
-Result undo_move(char j, char k, struct BoardState *b) {
-
-    Result r;
-    int move_mask = 1 << ((2-k) * 3 + (2-j));
-    for (int i = 0; i < 3; i++) {
-        if (b->X & move_mask) {
-            b->X ^= move_mask;
-            b->isXturn ^= 1;
-            r.error = ERR_OK;
-            return r;
-        }
-        if (b->O & move_mask) {
-            b->O ^= move_mask;
-            b->isXturn ^= 1;
-            r.error = ERR_OK;
-            return r;
-        }
-        move_mask <<= 9; 
-    }
-
-    r.error = ERR_ILLEGAL_MOVE;
-    return r;
-}
-
-int has_legal_moves(struct BoardState *b) {
+int has_legal_moves(BoardState *b) {
 
     if (winner(b) != 0) {
         return 0;
@@ -237,9 +328,7 @@ int has_legal_moves(struct BoardState *b) {
     return (all_occupied_mask & layer_full_mask) != layer_full_mask;
 }
 
-
-
-int minimax(struct BoardState *b, int depth, struct MinimaxResult *r) {
+int minimax_internal(BoardState *b, int depth, MinimaxResult *r, MinimaxResult *moves_buffer) {
     if (depth == 0 || !has_legal_moves(b)) {
         return winner(b);
     }
@@ -247,72 +336,103 @@ int minimax(struct BoardState *b, int depth, struct MinimaxResult *r) {
     char is_maximizing = b->isXturn;
     if (is_maximizing) {
         int best_score = INT_MIN;
-        for (int j = 0; j < 3; j++) {
-            for (int k = 0; k < 3; k++) {
-                Result move_result = move(j,k,b);
-                if (move_result.error == ERR_ILLEGAL_MOVE) {
-                    continue;
-                }
-                int score = minimax(b, depth-1, NULL);
-                if (score > best_score) {
-                    best_score = score;    
-                    if (r != NULL) {
-                        r->eval = best_score;
-                        r->j = j;
-                        r->k = k;
-                    }
-                }
-
-                Result undo_move_result = undo_move(j,k,b);
-                if (undo_move_result.error != ERR_OK) {
-                    printf("Error: Attempted to undo move j = %d, k = %d with nothing to undo\n on this board state:\n", j, k);
-                    printBoardState(b);
-                    printf("Debug info: depth = %d, undo_move_result = %d, isMaximizing = %d", depth, undo_move_result.error, is_maximizing);
-                    exit(EXIT_FAILURE);
+        get_move_order(b, moves_buffer);
+        for (int l = 0; l < 9; l++) {
+            MinimaxResult curr_move = moves_buffer[l];
+            Result move_result = move(curr_move.j,curr_move.k,b);
+            if (move_result.error == ERR_ILLEGAL_MOVE) {
+                continue;
+            }
+            int score = minimax_internal(b, depth-1, NULL, moves_buffer);
+            if (score > best_score) {
+                best_score = score;    
+                if (r != NULL) {
+                    r->eval = best_score;
+                    r->j = curr_move.j;
+                    r->k = curr_move.k;
                 }
             }
+
+            Result undo_move_result = undo_move(curr_move.j,curr_move.k,b);
+            if (undo_move_result.error != ERR_OK) {
+                printf("Error: Attempted to undo move j = %d, k = %d with nothing to undo\n on this board state:\n", curr_move.j, curr_move.k);
+                printBoardState(b);
+                printf("Debug info: depth = %d, undo_move_result = %d, isMaximizing = %d", depth, undo_move_result.error, is_maximizing);
+                exit(EXIT_FAILURE);
+            }
+
+            if (best_score == INT_MAX) {
+                break; // We have found a move that is winning by force, no need to explore other branches
+            }            
         }
         return best_score;
     } else {
         int best_score = INT_MAX;
-        for (int j = 0; j < 3; j++) {
-            for (int k = 0; k < 3; k++) {
-                Result move_result = move(j,k,b);
-                if (move_result.error == ERR_ILLEGAL_MOVE) {
-                    continue;
+        get_move_order(b, moves_buffer);
+        for (int l = 0; l < 9; l++) {
+            MinimaxResult curr_move = moves_buffer[l];
+            Result move_result = move(curr_move.j,curr_move.k,b);
+            if (move_result.error == ERR_ILLEGAL_MOVE) {
+                continue;
+            }
+            int score = minimax_internal(b, depth-1, NULL, moves_buffer);
+            if (score < best_score) {
+                best_score = score;  
+                if (r != NULL) {
+                    r->eval = best_score;
+                    r->j = curr_move.j;
+                    r->k = curr_move.k;
                 }
-                int score = minimax(b, depth-1, NULL);
-                if (score < best_score) {
-                    best_score = score;  
-                    if (r != NULL) {
-                        r->eval = best_score;
-                        r->j = j;
-                        r->k = k;
-                    }
-                }
-                Result undo_move_result = undo_move(j,k,b);
-                if (undo_move_result.error != ERR_OK) {
-                    printf("Error: Attempted to undo move j = %d, k = %d with nothing to undo\n on this board state:\n", j, k);
-                    printBoardState(b);
-                    printf("Debug info: depth = %d, undo_move_result = %d, isMaximizing = %d", depth, undo_move_result.error, is_maximizing);
-                    exit(EXIT_FAILURE);
-                }
+            }
+            Result undo_move_result = undo_move(curr_move.j,curr_move.k,b);
+            if (undo_move_result.error != ERR_OK) {
+                printf("Error: Attempted to undo move j = %d, k = %d with nothing to undo\n on this board state:\n", curr_move.j, curr_move.k);
+                printBoardState(b);
+                printf("Debug info: depth = %d, undo_move_result = %d, isMaximizing = %d", depth, undo_move_result.error, is_maximizing);
+                exit(EXIT_FAILURE);
+            }
+
+            if (best_score == INT_MIN) {
+                break; // We have found a move that is winning by force, no need to explore other branches
             }
         }
         return best_score;
     }
 }
 
+int minimax(BoardState *b, int depth, MinimaxResult *r) {
+    MinimaxResult *moves_buffer = malloc(9 * sizeof(MinimaxResult));
+    int eval = minimax_internal(b, depth, r, moves_buffer);
+    free(moves_buffer);
+    return eval;
+}
+
 int main() {
     generate_win_masks();
 
-    struct BoardState b = {
+    BoardState b = {
         .isXturn = 1,
         .X = 0,
         .O = 0
     };
 
-    struct MinimaxResult r = {0,0,0};
+    MinimaxResult r = {0,0,0};
+
+    // move(0,0,&b);
+    // move(1,1,&b);
+    // move(2,0,&b);
+    // move(2,2,&b);
+
+    // printBoardState(&b);
+
+    // printf("%d\n", eval(&b));
+
+    // get_move_order(&b, moves_buffer);
+
+    // for (int l = 0; l < 9; l += 1) {
+    //     MinimaxResult move = moves_buffer[l];
+    //     printf("Move %d: eval = %d, j = %d, k = %d\n", (l + 1), move.eval, move.j, move.k);   
+    // }
 
     int depth = 8;
     printf("\n\nWhat depth would you like the engine to search to? Note that anything beyond depth 8 will take at least 30 seconds per move: \n\n");
@@ -353,4 +473,6 @@ int main() {
 
     printf("Game ended: \n\n");
     printBoardState(&b);
+
+    return 0;
 }
