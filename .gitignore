@@ -1,5 +1,5 @@
 ._*
-python/.env
-python/__pycache__
+.env
+src/__pycache__
 c/3d
 build

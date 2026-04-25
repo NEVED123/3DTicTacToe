@@ -475,9 +475,7 @@ void generate_win_masks() {
 
 // Runnables
 
-int ThreeDTicTacToe() {
-
-    generate_win_masks();
+int ThreeDTicTacToeTUI() {
 
     BoardState b = {
         .isXturn = 1,
@@ -529,6 +527,28 @@ int ThreeDTicTacToe() {
     return 0;
 }
 
-int main() {
-    return ThreeDTicTacToe();
+int main(int argc, char *argv[]) {
+    generate_win_masks();
+
+    if (TUI) {
+        return ThreeDTicTacToeTUI();
+    }
+
+    uint32_t x = atoi(argv[1]);
+    uint32_t o = atoi(argv[2]);
+    uint32_t isXturn = atoi(argv[3]);
+
+    BoardState b = {
+        .isXturn = isXturn,
+        .X = x,
+        .O = o
+    };
+
+    int depth = 27;
+
+    MinimaxResult r = {0,0,0};
+    minimax(&b, depth, &r);
+
+    printf("%d, %d", r.j, r.k);
+    return 0;
 }
