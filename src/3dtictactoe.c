@@ -5,6 +5,9 @@
 #include <stdint.h>
 #include <assert.h>
 
+#define BASE_MAX_WIN_SCORE 100;
+#define BASE_MIN_WIN_SCORE -100;
+
 // Structs
 
 typedef enum {
@@ -132,62 +135,25 @@ void assert_board_equal(BoardState *a, BoardState *b) {
 }
 
 // Board State Evaluation
-
-int winner(BoardState *b) {
+// Depth is used to calculate how quickly we won for evaluation. I.E a win at a
+// shallower depth is a quicker win. This is so the engine if knows that it is losing by force, so that it can still distinguish between
+// holding moves and moves that lose immediately.
+int eval(BoardState *b, int depth) {
     for (int i = 0; i < 49; i++) {
         if ((b->X & WIN_MASKS[i]) == WIN_MASKS[i]){
-            return INT_MAX;
+            return (depth+1) * BASE_MAX_WIN_SCORE;
         }
         if ((b->O & WIN_MASKS[i]) == WIN_MASKS[i]) {
-            return INT_MIN;
+            return (depth+1) * BASE_MIN_WIN_SCORE;
         }
     }
 
     return 0;
 }
 
-int eval(BoardState *b) {
-    for (int i = 0; i < 48; i++) {
-        if ((b->X & WIN_MASKS[i]) == WIN_MASKS[i]){
-            return INT_MAX;
-        }
-        if ((b->O & WIN_MASKS[i]) == WIN_MASKS[i]) {
-            return INT_MIN;
-        }
-    }
-
-    // Look for 2 in a rows (I will refer to these as C2 for "connect 2") - for each 2 in a row each player has on the board, this will earn one point.
-    // From this mask, since every "node" is connected to one another, we can use n(n-1)/2 to find total number of 2 in a rows.
-    // The eval will be then difference between these two. In the future, we could prioritize the ones that actually
-    // open up a new immediate threat rather than those that are buried and can't pose any problems.
-    // Note that this currently doesn't take into account whose turn it is - i.e, X could be one turn away from winning, but if O has more c2's, then this algorithm
-    int total_x_c2 = 0;
-    int total_o_c2 = 0;
-    uint32_t c2_mask = 0b0110110000110110000000000000; //This is a 2x2x2 cube within the 3x3x3 grid. There are only 8 places for this to fit, hence l = 2, m = 4
-    for (int i = 0; i < 2; i += 1) {
-        for (int j = 0; j < 2; j += 1) {
-            for (int k = 0; k < 2; k += 1) {
-                uint32_t x_c2_mask = b->X & c2_mask;
-                int num_x_c2_nodes = __builtin_popcount(x_c2_mask); //Super overoptimization, __builtin_popcount directly calls the ASM instruction for counting number of bits set to 1
-                total_x_c2 += (num_x_c2_nodes * (num_x_c2_nodes-1)) / 2; 
-
-                uint32_t o_c2_mask = b->O & c2_mask;
-                int num_o_c2_nodes = __builtin_popcount(o_c2_mask); 
-                total_o_c2 +=  (num_o_c2_nodes * (num_o_c2_nodes-1)) / 2;
-
-                c2_mask >>= 1;
-            }
-            c2_mask >>= 1;
-        }
-        c2_mask >>= 3; // This brings us up to the next layer
-    }
-
-    return total_x_c2 - total_o_c2;
-}
-
 int has_legal_moves(BoardState *b) {
 
-    if (winner(b) != 0) {
+    if (eval(b, 1) != 0) {
         return 0;
     }
 
@@ -203,7 +169,7 @@ Result move(char j, char k, BoardState *b) {
 
     Result r;
 
-    int winning_player = winner(b);
+    int winning_player = eval(b, 1);
     if (winning_player != 0) {
         r.error = ERR_ILLEGAL_MOVE;
         return r;
@@ -282,7 +248,7 @@ void get_move_order(BoardState *b, MinimaxResult *moves_buffer) {
                 continue;
             }
 
-            int move_evaluation = eval(b);
+            int move_evaluation = eval(b, 1);
             
             // Use insertion sort to put the move in its correct spot
             // heap sort may be slightly faster here but the difference would be negligable since n is at most 9 and not worth the additional complexity for now.
@@ -312,10 +278,10 @@ void get_move_order(BoardState *b, MinimaxResult *moves_buffer) {
     }
 }
 
-int minimax(BoardState *b, MinimaxResult *r) {
+int minimax(BoardState *b, int depth, MinimaxResult *r) {
 
-    if (!has_legal_moves(b)) {
-        return winner(b);
+    if (depth == 0 || !has_legal_moves(b)) {
+        return eval(b, depth);
     }
 
     MinimaxResult *moves_buffer = malloc(9 * sizeof(MinimaxResult));
@@ -346,7 +312,7 @@ int minimax(BoardState *b, MinimaxResult *r) {
                 exit(EXIT_FAILURE);
             }
 
-            int score = minimax(b, NULL);
+            int score = minimax(b, depth-1, NULL);
 
             if (score > best_score) {
                 best_score = score;    
@@ -368,10 +334,9 @@ int minimax(BoardState *b, MinimaxResult *r) {
 
             assert_board_equal(&after, &before);
             
-            if (best_score == INT_MAX) {
+            if (best_score > 0) {
                 break; // We have found a move that is winning by force, no need to explore other branches
             }
-            
         }
         free(moves_buffer);
         return best_score;
@@ -398,7 +363,7 @@ int minimax(BoardState *b, MinimaxResult *r) {
                 exit(EXIT_FAILURE);
             }
 
-            int score = minimax(b, NULL);
+            int score = minimax(b, depth-1, NULL);
             if (score < best_score) {
                 best_score = score;  
                 if (r != NULL) {
@@ -419,7 +384,7 @@ int minimax(BoardState *b, MinimaxResult *r) {
             
             assert_board_equal(&after, &before);
 
-            if (best_score == INT_MIN) {
+            if (best_score < 0) {
                 break; // We have found a move that is winning by force, no need to explore other branches
             }
         }
@@ -522,10 +487,9 @@ int ThreeDTicTacToe() {
 
     MinimaxResult r = {0,0,0};
 
-    minimax(&b, &r);
-    move(r.j, r.k, &b);
+    int depth = 27;
 
-    printf("Welcome to 3D Tic Tac Toe. You are O and going second. X coordinate is 0 to 2 from left to right, and Y coordinate is 0 to 2 from bottom to top\n\n");
+    printf("Welcome to 3D Tic Tac Toe. You are X and going first. X coordinate is 0 to 2 from left to right, and Y coordinate is 0 to 2 from bottom to top\n\n");
 
     while (has_legal_moves(&b)) {
         char user_made_legal_move = 0;
@@ -550,11 +514,11 @@ int ThreeDTicTacToe() {
 
         struct timespec start, end;
         clock_gettime(CLOCK_MONOTONIC, &start);
-        minimax(&b, &r);
+        minimax(&b, depth, &r);
         clock_gettime(CLOCK_MONOTONIC, &end);
         double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
         printf("Time to find move: %f seconds\n", elapsed);
-        printf("Eval: %d", r.eval);
+        printf("Eval: %d\n", r.eval);
         
         move(r.j, r.k, &b);
     }
