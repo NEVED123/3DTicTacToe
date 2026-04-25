@@ -134,7 +134,7 @@ void assert_board_equal(BoardState *a, BoardState *b) {
 // Board State Evaluation
 
 int winner(BoardState *b) {
-    for (int i = 0; i < 48; i++) {
+    for (int i = 0; i < 49; i++) {
         if ((b->X & WIN_MASKS[i]) == WIN_MASKS[i]){
             return INT_MAX;
         }
@@ -312,9 +312,9 @@ void get_move_order(BoardState *b, MinimaxResult *moves_buffer) {
     }
 }
 
-int minimax_internal(BoardState *b, int depth, int initial_depth, MinimaxResult *r) {
+int minimax(BoardState *b, MinimaxResult *r) {
 
-    if (depth == 0 || !has_legal_moves(b)) {
+    if (!has_legal_moves(b)) {
         return winner(b);
     }
 
@@ -342,15 +342,15 @@ int minimax_internal(BoardState *b, int depth, int initial_depth, MinimaxResult 
             if (move_result.error == ERR_ILLEGAL_MOVE) {
                 printf("Error: Attempted to make move j = %d, k = %d with on this board state:\n", curr_move.j, curr_move.k);
                 printBoardState(b);
-                printf("Debug info: depth = %d, move_result = %d, isMaximizing = %d\n", depth, move_result.error, is_maximizing);
+                printf("Debug info: move_result = %d, isMaximizing = %d\n", move_result.error, is_maximizing);
                 exit(EXIT_FAILURE);
             }
 
-            int score = minimax_internal(b, depth-1, depth, NULL);
+            int score = minimax(b, NULL);
 
             if (score > best_score) {
                 best_score = score;    
-                if (r != NULL && depth == initial_depth) {
+                if (r != NULL) {
                     r->eval = best_score;
                     r->j = curr_move.j;
                     r->k = curr_move.k;
@@ -394,14 +394,14 @@ int minimax_internal(BoardState *b, int depth, int initial_depth, MinimaxResult 
             if (move_result.error == ERR_ILLEGAL_MOVE) {
                 printf("Error: Attempted to make move j = %d, k = %d with on this board state:\n", curr_move.j, curr_move.k);
                 printBoardState(b);
-                printf("Debug info: depth = %d, move_result = %d, isMaximizing = %d\n", depth, move_result.error, is_maximizing);
+                printf("Debug info: move_result = %d, isMaximizing = %d\n", move_result.error, is_maximizing);
                 exit(EXIT_FAILURE);
             }
 
-            int score = minimax_internal(b, depth-1, depth, NULL);
+            int score = minimax(b, NULL);
             if (score < best_score) {
                 best_score = score;  
-                if (r != NULL && depth == initial_depth) {
+                if (r != NULL) {
                     r->eval = best_score;
                     r->j = curr_move.j;
                     r->k = curr_move.k;
@@ -426,11 +426,6 @@ int minimax_internal(BoardState *b, int depth, int initial_depth, MinimaxResult 
         free(moves_buffer);
         return best_score;
     }
-}
-
-int minimax(BoardState *b, int depth, MinimaxResult *r) {
-    int eval = minimax_internal(b, depth, depth, r);
-    return eval;
 }
 
 // Misc Helpers
@@ -527,11 +522,7 @@ int ThreeDTicTacToe() {
 
     MinimaxResult r = {0,0,0};
 
-    int depth = 8;
-    printf("\n\nWhat depth would you like the engine to search to? Note that anything beyond depth 8 will take at least 30 seconds per move: \n\n");
-    scanf("%d", &depth);
-
-    minimax(&b, depth, &r);
+    minimax(&b, &r);
     move(r.j, r.k, &b);
 
     printf("Welcome to 3D Tic Tac Toe. You are O and going second. X coordinate is 0 to 2 from left to right, and Y coordinate is 0 to 2 from bottom to top\n\n");
@@ -559,10 +550,10 @@ int ThreeDTicTacToe() {
 
         struct timespec start, end;
         clock_gettime(CLOCK_MONOTONIC, &start);
-        minimax(&b, depth, &r);
+        minimax(&b, &r);
         clock_gettime(CLOCK_MONOTONIC, &end);
         double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
-        printf("Time to find move on depth %d: %f seconds\n", depth, elapsed);
+        printf("Time to find move: %f seconds\n", elapsed);
         printf("Eval: %d", r.eval);
         
         move(r.j, r.k, &b);
