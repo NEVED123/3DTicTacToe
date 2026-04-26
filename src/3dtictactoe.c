@@ -36,6 +36,34 @@ typedef struct {
 
 uint32_t WIN_MASKS[49];
 
+// Running full minimax on a blank board takes about 1 minute, and positions with one move take between 4-12 seconds.
+// Every other position can be calculated in a fraction of a second, so we only need to cache these ones.
+BoardState PRECOMPUTED_POSITIONS[10] = {
+    {.isXturn = 1, .X = 0, .O = 0},
+    {.isXturn = 0, .X = 67108864, .O = 0},
+    {.isXturn = 0, .X = 8388608, .O = 0},
+    {.isXturn = 0, .X = 1048576, .O = 0},
+    {.isXturn = 0, .X = 33554432, .O = 0},
+    {.isXturn = 0, .X = 4194304, .O = 0},
+    {.isXturn = 0, .X = 524288, .O = 0},
+    {.isXturn = 0, .X = 16777216, .O = 0},
+    {.isXturn = 0, .X = 2097152, .O = 0},
+    {.isXturn = 0, .X = 262144, .O = 0}
+};
+
+MinimaxResult PRECOMPUTED_MOVES[10] = {
+    {.eval = 1900, .is_sentinal = 0, .j = 1, .k = 1},
+    {.eval = 1600, .is_sentinal = 0, .j = 1, .k = 1},
+    {.eval = -1700, .is_sentinal = 0, .j = 1, .k = 1},
+    {.eval = 1600, .is_sentinal = 0, .j = 1, .k = 1},
+    {.eval = -1700, .is_sentinal = 0, .j = 1, .k = 1},
+    {.eval = 2000, .is_sentinal = 0, .j = 0, .k = 0},
+    {.eval = -1700, .is_sentinal = 0, .j = 1, .k = 1},
+    {.eval = 1600, .is_sentinal = 0, .j = 1, .k = 1},
+    {.eval = -1700, .is_sentinal = 0, .j = 1, .k = 1},
+    {.eval = 1600, .is_sentinal = 0, .j = 1, .k = 1}
+};
+
 // Printers
 
 void printBoardMask(uint32_t m) {
@@ -124,8 +152,16 @@ void assert_legal_position(BoardState *b) {
     assert(1);
 }
 
-void assert_board_equal(BoardState *a, BoardState *b) {
+int is_board_equal(BoardState *a, BoardState *b) {
     if (a->X != b->X || a->O != b->O || a->isXturn != b->isXturn) {
+        return 0;
+    }
+
+    return 1;
+}
+
+void assert_board_equal(BoardState *a, BoardState *b) {
+    if (!is_board_equal(a, b)) {
         printf("Board mismatch!\n");
         printf("Expected:\n");
         printBoardState(a);
@@ -279,7 +315,35 @@ void get_move_order(BoardState *b, MinimaxResult *moves_buffer) {
     }
 }
 
+MinimaxResult get_precomputed_eval(BoardState *b) {
+    for (int i = 0; i < 10; i++) {
+        if (is_board_equal(b, &PRECOMPUTED_POSITIONS[i])) {
+            return PRECOMPUTED_MOVES[i];
+        }
+    }
+
+    return (MinimaxResult) {
+        .eval = 0,
+        .j = 0,
+        .k = 0,
+        .is_sentinal = 1
+    };
+}   
+
+
 int minimax(BoardState *b, int depth, int alpha, int beta, MinimaxResult *r, int *num_moves) {
+
+    MinimaxResult precomputed = get_precomputed_eval(b);
+
+    if (!precomputed.is_sentinal) {
+        if (r != NULL) {
+            r->eval = precomputed.eval;
+            r->j = precomputed.j;
+            r->k = precomputed.k;
+        }
+
+        return precomputed.eval;
+    }
 
     if (!has_legal_moves(b)) {
         return eval(b, depth);
