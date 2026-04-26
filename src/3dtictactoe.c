@@ -4,6 +4,7 @@
 #include <time.h>
 #include <stdint.h>
 #include <assert.h>
+#include <string.h>
 
 #define BASE_MAX_WIN_SCORE 100;
 #define BASE_MIN_WIN_SCORE -100;
@@ -278,9 +279,9 @@ void get_move_order(BoardState *b, MinimaxResult *moves_buffer) {
     }
 }
 
-int minimax(BoardState *b, int depth, MinimaxResult *r) {
+int minimax(BoardState *b, int depth, int alpha, int beta, MinimaxResult *r, int *num_moves) {
 
-    if (depth == 0 || !has_legal_moves(b)) {
+    if (!has_legal_moves(b)) {
         return eval(b, depth);
     }
 
@@ -289,6 +290,7 @@ int minimax(BoardState *b, int depth, MinimaxResult *r) {
 
     char is_maximizing = b->isXturn;
     if (is_maximizing) {
+        *num_moves += 1;
         int best_score = INT_MIN;
         for (int l = 0; l < 9; l++) {
             
@@ -312,7 +314,7 @@ int minimax(BoardState *b, int depth, MinimaxResult *r) {
                 exit(EXIT_FAILURE);
             }
 
-            int score = minimax(b, depth-1, NULL);
+            int score = minimax(b, depth-1, alpha, beta, NULL, num_moves);
 
             if (score > best_score) {
                 best_score = score;    
@@ -334,8 +336,12 @@ int minimax(BoardState *b, int depth, MinimaxResult *r) {
 
             assert_board_equal(&after, &before);
             
-            if (best_score > 0) {
-                break; // We have found a move that is winning by force, no need to explore other branches
+            if (best_score > beta) {
+                break;
+            }
+
+            if (best_score > alpha) {
+                alpha = best_score;
             }
         }
         free(moves_buffer);
@@ -343,6 +349,7 @@ int minimax(BoardState *b, int depth, MinimaxResult *r) {
     } else {
         int best_score = INT_MAX;
         for (int l = 0; l < 9; l++) {
+            *num_moves += 1;
             MinimaxResult curr_move = moves_buffer[l];
 
             if (curr_move.is_sentinal) {
@@ -363,7 +370,7 @@ int minimax(BoardState *b, int depth, MinimaxResult *r) {
                 exit(EXIT_FAILURE);
             }
 
-            int score = minimax(b, depth-1, NULL);
+            int score = minimax(b, depth-1, alpha, beta, NULL, num_moves);
             if (score < best_score) {
                 best_score = score;  
                 if (r != NULL) {
@@ -384,8 +391,12 @@ int minimax(BoardState *b, int depth, MinimaxResult *r) {
             
             assert_board_equal(&after, &before);
 
-            if (best_score < 0) {
-                break; // We have found a move that is winning by force, no need to explore other branches
+            if (best_score < alpha) {
+                break;
+            }
+
+            if (best_score < beta) {
+                beta = best_score;
             }
         }
         free(moves_buffer);
@@ -477,6 +488,24 @@ void generate_win_masks() {
 
 int ThreeDTicTacToeTUI() {
 
+    printf("Welcome to 3D Tic Tac Toe. Would you like to go first (X) or second (O)? X coordinate is 0 to 2 from left to right, and Y coordinate is 0 to 2 from bottom to top\n");
+
+    char user_turn;
+
+    while (1) {
+        printf("Choose X or O: ");
+        user_turn = getchar();
+
+        // consume leftover characters (like newline)
+        while (getchar() != '\n');
+
+        if (user_turn == 'X' || user_turn == 'O') {
+            break;
+        }
+
+        printf("You must choose \"X\" or \"O\"\n");
+    }
+
     BoardState b = {
         .isXturn = 1,
         .X = 0,
@@ -487,7 +516,20 @@ int ThreeDTicTacToeTUI() {
 
     int depth = 27;
 
-    printf("Welcome to 3D Tic Tac Toe. You are X and going first. X coordinate is 0 to 2 from left to right, and Y coordinate is 0 to 2 from bottom to top\n\n");
+    int num_moves = 0;
+    
+    if (user_turn == 'O') {
+        struct timespec start, end;
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        minimax(&b, depth, INT_MIN, INT_MAX, &r, &num_moves);
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+        printf("Time to find move: %f seconds\n", elapsed);
+        printf("Number of moves explored: %d\n", num_moves);
+        printf("Eval: %d\n", r.eval);
+        num_moves = 0;
+        move(r.j, r.k, &b);
+    }
 
     while (has_legal_moves(&b)) {
         char user_made_legal_move = 0;
@@ -512,12 +554,13 @@ int ThreeDTicTacToeTUI() {
 
         struct timespec start, end;
         clock_gettime(CLOCK_MONOTONIC, &start);
-        minimax(&b, depth, &r);
+        minimax(&b, depth, INT_MIN, INT_MAX, &r, &num_moves);
         clock_gettime(CLOCK_MONOTONIC, &end);
         double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
         printf("Time to find move: %f seconds\n", elapsed);
+        printf("Number of moves explored: %d\n", num_moves);
         printf("Eval: %d\n", r.eval);
-        
+        num_moves = 0;
         move(r.j, r.k, &b);
     }
 
@@ -545,9 +588,10 @@ int main(int argc, char *argv[]) {
     };
 
     int depth = 27;
+    int num_moves = 0;
 
     MinimaxResult r = {0,0,0};
-    minimax(&b, depth, &r);
+    minimax(&b, depth, INT_MIN, INT_MAX, &r, &num_moves);
 
     printf("%d, %d", r.j, r.k);
     return 0;
